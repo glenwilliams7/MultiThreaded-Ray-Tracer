@@ -9,12 +9,9 @@
 #include <condition_variable>
 #include <mutex>
 #include <chrono>
-
 #include <vector>
 #include <cmath>
-
 #include <ctime>
-
 #include "Vect.h"
 #include "Ray.h"
 #include "Camera.h"
@@ -33,6 +30,14 @@ struct RGBType {
 	double r, g, b;
 };
 
+// functions
+void addSceneObjects();
+Color getColorAt(Vect intersection_position, Vect intersecting_ray_direction0, vector<Object*> scene_objects, int index_of_winning_object, vector<LSource*>light_sources, double accuracy, double ambientLight);
+void renderSlice(int xMin, int xMax, int threadNum);
+int winningObjectIndex(vector<double> object_intersections);
+void savebmp(const char *filename, int w, int h, int dpi, RGBType *data);
+//end functions
+
 // Global variables
 mutex textSync;				//keeps text uncluttered
 
@@ -41,11 +46,9 @@ int width = 800;			//	scene width
 int height = 600;			//	scene height
 int dpi = 72;				//bitmap save parameter
 int n = width*height;		// # of pixels
-const int aadepth = 4;		//anti aliasing level, 1 = none
-
+const int aadepth = 1;		//anti aliasing level, 1 = none
 double aspectRatio = (double)width / (double)height;
 double accuracy = 0.000001;				//accuracy of positions
-
 RGBType *pixels = new RGBType[n];		//holds each individual pixel
 
 //multithreading stuff
@@ -58,27 +61,32 @@ RGBType *pixels4 = new RGBType[(n)];		//holds each individual pixel...
 RGBType *pixels5 = new RGBType[(n)];		//holds each individual pixel...
 RGBType *pixels6 = new RGBType[(n)];		//holds each individual pixel...
 RGBType *pixels7 = new RGBType[(n)];		//holds each individual pixel for thread 7
-
 RGBType *pixels8 = new RGBType[(n)];		//holds each individual pixel
 RGBType *pixels9 = new RGBType[(n)];		//holds each individual pixel
 RGBType *pixels10 = new RGBType[(n)];		//holds each individual pixel...
-RGBType *pixels11 = new RGBType[(n)];		//holds each individual pixel...
-
+RGBType *pixels11 = new RGBType[(n)];		//holds each individual pixel... thread 11
 //end multithreading stuff
 
-//some static vectors
+// Define Axis
 Vect X(1, 0, 0);
 Vect Y(0, 1, 0);
 Vect Z(0, 0, 1);
 
-//camera stuff
-Vect camPos(-2.1, 1.25, -2.5);		//assigned values		z=-2.5
+// camera location and direction
+Vect camPos(-2.1, 1.25, -2.5);			//assigned values
 Vect look_at(-0.9, 0.45, 0);			//assigned values
+Vect diff_btw(camPos.getVectX() - look_at.getVectX(), camPos.getVectY() - look_at.getVectY(), camPos.getVectZ() - look_at.getVectZ());
+Vect camDir = diff_btw.negative().normalize();
+Vect camRight = Y.crossProduct(camDir).normalize();
+Vect camDown = camRight.crossProduct(camDir);
+Camera scene_cam(camPos, camDir, camRight, camDown);
+// end camera
 
-// colors
+// colors, R, G, B, reflectivity, texture/pattern
 Color white_light(0.6, 0.6, 0.6, 0.0, 0.0);		//scene_light
 Color white_light2(0.4, 0.4, 0.4, 0.0, 0.0);	//scene_light2
-Color pretty_green(0.5, 1.0, 0.5, 0.8, 0);		//special is shinyness/reflectivity
+
+Color pretty_green(0.5, 1.0, 0.5, 0.8, 0);		//light options
 Color pretty_maroon(0.7, 0.2, 0.25, 0.5, 0);
 Color silver(0.5, 0.5, 0.5, 0.99, 0);
 Color black(0.0, 0.0, 0.0, 0.0, 0);
@@ -87,498 +95,54 @@ Color tile_floor(0.8, 0.8, 0.8, 0.3, 2);
 Color orange(0.94, 0.75, 0.31, 0.1, 3);
 Color Sun(0.94, 0.75, 0.31, .2, 1);
 Color mirrorFinish(0.0, 0.0, 0.0, 0.9, 1);
-//end colors
-
-//lights
-vector<LSource*> light_sources;		//holds all light sources
-double ambientLight = 0.2;			//ambient light
-Vect lightPos(-16, 16, -1);
-Light scene_light(lightPos, white_light);
-Vect lightPos2(16, 16, -1);
-Light scene_light2(lightPos2, white_light2);
-//end lights
-
-//assigned colors
 Color ground(0.6, 0.6, 0.6, 0.5, 2);		//checkered floor
 Color checkerMt1(0.7, 0, 0, 0.5, 3);		//checkered sphere
 Color bricks(0, 0, 0, 0.5, 4);				//brick pattern for teapot
-Color refractive(0.0, 0, 0.3, 0.1, 5);			//glass ball
+Color refractive(0.0, 0, 0.3, 0.1, 5);		//glass ball
+//end colors
 
-//3 required objects
-Plane scene_plane(Vect(0, 1, 0), 0, tile_floor);					//up direction, distance from origin, color
-Sphere refractedSphere(Vect(-1.5, .5, 1.2), .5, refractive);		//center, radius, color
-Sphere checkeredSphere(Vect(1.5, .5, 1.2), .5, checkerMt1);		//center, radius, color
-
-//grid markers, not active in final version
-Vect trueOrigin(0, 0, 0);
-Sphere scene_sphere0(trueOrigin, .5, pretty_maroon);		//center, radius, color
-Vect origin(-1, 0, 0);
-Sphere scene_sphere(origin, .5, pretty_green);		//center, radius, color
-Vect origin2(1, 0, 0);
-Sphere scene_sphere2(origin2, .5, pretty_green);		//center, radius, color
-
-Vect origin3(-1.5, .5, 3.5);
-Sphere scene_sphere3(origin3, .5, orange);		//center, radius, color
-//end grid markers
-
-Triangle teapot[896];				//holds teapot triangles
+//lights
+vector<LSource*> light_sources;					//holds all light sources
+double ambientLight = 0.2;						//ambient light
+Vect lightPos(-16, 16, -1);
+Light scene_light(lightPos, white_light);		//light 1
+Vect lightPos2(16, 16, -1);
+Light scene_light2(lightPos2, white_light2);	//light 2
+//end lights
 
 vector<Object*> scene_objects;		//holds all objects in scene
-//end objects
 
-Vect diff_btw(camPos.getVectX() - look_at.getVectX(), camPos.getVectY() - look_at.getVectY(), camPos.getVectZ() - look_at.getVectZ());
-Vect camDir = diff_btw.negative().normalize();
-Vect camRight = Y.crossProduct(camDir).normalize();
-Vect camDown = camRight.crossProduct(camDir);
-Camera scene_cam(camPos, camDir, camRight, camDown);
-
-// end global variables
-
-//save render to bitmap
-void savebmp(const char *filename, int w, int h, int dpi, RGBType *data) {
-
-	FILE *f;
-	int k = w*h;
-	int s = 4 * k;
-	int filesize = 54 + s;
-
-	double factor = 39.375;
-	int m = static_cast<int>(factor);
-
-	int ppm = dpi*m;
-	unsigned char bmpfileheader[14] = { 'B', 'M', 0, 0, 0, 0, 0, 0, 0, 0, 54, 0, 0, 0 };
-	unsigned char bmpinfoheader[40] = {40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 24, 0};
-
-	bmpfileheader[2] = (unsigned char)(filesize);
-	bmpfileheader[3] = (unsigned char)(filesize >> 8);
-	bmpfileheader[4] = (unsigned char)(filesize >> 16);
-	bmpfileheader[5] = (unsigned char)(filesize >> 24);
-
-	bmpinfoheader[4] = (unsigned char)(w);
-	bmpinfoheader[5] = (unsigned char)(w >> 8);
-	bmpinfoheader[6] = (unsigned char)(w >> 16);
-	bmpinfoheader[7] = (unsigned char)(w >> 24);
-
-	bmpinfoheader[8] = (unsigned char)(h);
-	bmpinfoheader[9] = (unsigned char)(h >> 8);
-	bmpinfoheader[10] = (unsigned char)(h >> 16);
-	bmpinfoheader[11] = (unsigned char)(h >> 24);
-
-	bmpinfoheader[21] = (unsigned char)(s);
-	bmpinfoheader[22] = (unsigned char)(s >> 8);
-	bmpinfoheader[23] = (unsigned char)(s >> 16);
-	bmpinfoheader[24] = (unsigned char)(s >> 24);
-
-	bmpinfoheader[25] = (unsigned char)(ppm);
-	bmpinfoheader[26] = (unsigned char)(ppm >> 8);
-	bmpinfoheader[27] = (unsigned char)(ppm >> 16);
-	bmpinfoheader[28] = (unsigned char)(ppm >> 24);
-
-	bmpinfoheader[29] = (unsigned char)(ppm);
-	bmpinfoheader[30] = (unsigned char)(ppm >> 8);
-	bmpinfoheader[31] = (unsigned char)(ppm >> 16);
-	bmpinfoheader[32] = (unsigned char)(ppm >> 24);
-
-
-
-	f = fopen(filename, "wb");
-
-	fwrite(bmpfileheader, 1, 14, f);
-	fwrite(bmpinfoheader, 1, 40, f);
-
-	for (int i = 0; i < k; i++) {
-
-		RGBType rgb = data[i];
-
-		double red = (data[i].r) * 255;
-		double green = (data[i].g) * 255;
-		double blue = (data[i].b) * 255;
-
-		unsigned char color[3] = { (int)floor(blue), (int)floor(green), (int)floor(red) };
-
-		fwrite(color, 1, 3, f);
-	}
-
-	fclose(f);
-
-}
-
-//find index of first intersection
-int winningObjectIndex(vector<double> object_intersections) {
-	int index_of_minimum_value;
-
-
-	if (object_intersections.size() == 0) {		//check if intersection exists!
-		return -1;
-	}
-	else if (object_intersections.size() == 1) {	//only 1 intersection
-		if (object_intersections.at(0) > 0) {
-			return 0;	//index 0
-		}
-		else {	//intersection is negative, no hits
-			return -1;
-		}
-	}
-	else {		//find first intersection if more than 1 exists
-
-		double max = 0;
-		for (int i = 0; i < object_intersections.size(); i++) {		//find intersection closest to camera
-			if (max < object_intersections.at(i)) {
-				max = object_intersections.at(i);
-			}	//end if
-		}	//end for
-
-		if (max > 0) {
-			for (int index = 0; index < object_intersections.size(); index++) {
-				if (object_intersections.at(index) > 0 && object_intersections.at(index) <= max) {
-					max = object_intersections.at(index);
-					index_of_minimum_value = index;				//index of nearest intersection
-				}	//end if
-			}	//end for
-
-			return index_of_minimum_value;
-		}	//end if max > 0
-		else {
-			return -1;		//all intersections are negative
-		}
-
-
-	}	//end outermost if/else
-	
-}		//end winningObjectIndex
-
-// get Refract ray, not used in the end
-Vect Refract(Vect intersection_position, Vect intersecting_ray_direction0, vector<Object*> scene_objects, int index_of_winning_object, vector<LSource*>light_sources, double accuracy, double ambientLight) {
-
-	Color winning_object_color = scene_objects.at(index_of_winning_object)->getColor();
-	Vect winning_object_normal = scene_objects.at(index_of_winning_object)->getNormalAt(intersection_position);
-	Vect intersecting_ray_direction = intersecting_ray_direction0;
-
-	Vect tempPosition = intersection_position;			//sphere face position
-	Vect tempNormal = winning_object_normal;			//get sphere face normal
-	Vect tempDirection0 = intersecting_ray_direction;	//sphere face ray direction
-
-	double refl = winning_object_color.getColorSpecial();
-	double trans = 0.0;
-
-	double refractiveIndex = 1.1;
-
-	double n1 = 0;
-	double n2 = 0;
-	double nr = 0;
-
-	double cosI = tempDirection0.dotProduct(tempNormal);
-
-	if (cosI > 0.0) {
-		tempDirection0 = tempDirection0.negative();
-		n1 = refractiveIndex;
-		n2 = 1.0;
-	}
-	else {
-		n1 = 1.0;
-		n2 = refractiveIndex;
-		cosI = -cosI;
-	}
-
-	nr = n1 / n2;
-	double sinT2 = nr*nr*(1.0 - cosI*cosI);
-	double cosT = sqrt(1.0 - sinT2);
-
-	double rn = (n1*cosI - n2*cosT) / (n1*cosI + n2*cosT);
-	double rt = (n2*cosI - n1*cosT) / (n2*cosI + n2*cosT);
-
-	rn *= rn;
-	rt *= rt;
-	refl = (rn + rt)*0.5;
-	trans = 1.0 - refl;
-
-	if (nr == 1.0) {
-		intersecting_ray_direction = tempDirection0;		//return tempDirection0;
-	}
-
-	if (cosT*cosT < 0.0) {		//total internal reflection
-		refl = 1.0;
-		trans = 0.0;
-		Vect rdir = intersecting_ray_direction;
-
-		double rdirTemp = rdir.dotProduct(tempNormal);
-		Vect rdirTemp2 = tempNormal.vectMult(rdirTemp * -2);
-		Vect dir1 = rdir.vectAdd(rdirTemp2);
-
-		return dir1.normalize();					//return calcReflectingRay(r, intersection, normal);
-	}
-
-	Vect dir = tempDirection0.vectMult(nr).vectAdd(tempNormal.vectMult(nr*cosI - cosT));
-	return intersecting_ray_direction = dir.normalize();				//	return Ray(intersection + dir*BIAS, dir);
-	//tempPosition = tempPosition.vectAdd(dir);
-}
-
-// get origin of refract ray, also not used
-Vect RefractPos(Vect intersection_position, Vect intersecting_ray_direction0, vector<Object*> scene_objects, int index_of_winning_object, vector<LSource*>light_sources, double accuracy, double ambientLight) {
-
-	Color winning_object_color = scene_objects.at(index_of_winning_object)->getColor();
-	Vect winning_object_normal = scene_objects.at(index_of_winning_object)->getNormalAt(intersection_position);
-	Vect intersecting_ray_direction = intersecting_ray_direction0;
-
-	Vect tempPosition = intersection_position;			//sphere face position
-	Vect tempNormal = winning_object_normal;			//get sphere face normal
-	Vect tempDirection0 = intersecting_ray_direction;	//sphere face ray direction
-
-	double refl = winning_object_color.getColorSpecial();
-	double trans = 0.0;
-
-	double refractiveIndex = 1.1;
-
-	double n1 = 0;
-	double n2 = 0;
-	double nr = 0;
-
-	double cosI = tempDirection0.dotProduct(tempNormal);
-
-	if (cosI > 0.0) {
-		tempDirection0 = tempDirection0.negative();
-		n1 = refractiveIndex;
-		n2 = 1.0;
-	}
-	else {
-		n1 = 1.0;
-		n2 = refractiveIndex;
-		cosI = -cosI;
-	}
-
-	nr = n1 / n2;
-	double sinT2 = nr*nr*(1.0 - cosI*cosI);
-	double cosT = sqrt(1.0 - sinT2);
-
-	double rn = (n1*cosI - n2*cosT) / (n1*cosI + n2*cosT);
-	double rt = (n2*cosI - n1*cosT) / (n2*cosI + n2*cosT);
-
-	rn *= rn;
-	rt *= rt;
-	refl = (rn + rt)*0.5;
-	trans = 1.0 - refl;
-
-	if (nr == 1.0) {
-	//	return intersecting_ray_direction = tempDirection0;		//return tempDirection0;
-		return tempPosition;
-	}
-
-	if (cosT*cosT < 0.0) {		//total internal reflection
-		refl = 1.0;
-		trans = 0.0;
-
-		Vect rdir = intersecting_ray_direction;
-
-		double rdirTemp = rdir.dotProduct(tempNormal);
-		Vect rdirTemp2 = tempNormal.vectMult(rdirTemp * -2);
-		Vect dir1 = rdir.vectAdd(rdirTemp2);
-
-		//return dir1.normalize();					//return calcReflectingRay(r, intersection, normal);
-		//return calcReflectingRay(r, intersection, normal);
-		return tempPosition;
-	}
-
-	Vect dir = tempDirection0.vectMult(nr).vectAdd(tempNormal.vectMult(nr*cosI - cosT));
-	intersecting_ray_direction = dir.normalize();				//	return Ray(intersection + dir*BIAS, dir);
-	return tempPosition = tempPosition.vectAdd(dir);
-}
-
-Color getColorAt(Vect intersection_position, Vect intersecting_ray_direction0, vector<Object*> scene_objects, int index_of_winning_object, vector<LSource*>light_sources, double accuracy, double ambientLight) {
-
-	Color winning_object_color = scene_objects.at(index_of_winning_object)->getColor();
-	Vect winning_object_normal = scene_objects.at(index_of_winning_object)->getNormalAt(intersection_position);
-	Vect intersecting_ray_direction = intersecting_ray_direction0;
-
-	//patterns, textures, refractions
-	if (winning_object_color.getColorSpecial2() == 2) {		//if object special2 color == 2, bit checkers
-		int square = (int)floor(intersection_position.getVectX()) + (int)floor(intersection_position.getVectZ());
-		if ((square % 2) == 0) {					//dark tile
-			winning_object_color.setColorRed(0.2);
-			winning_object_color.setColorGreen(0.2);
-			winning_object_color.setColorBlue(0.2);
-		}
-	} 
-	else if(winning_object_color.getColorSpecial2() == 3) {		//if object special2 color == 3, small checkers
-		int square = (int)floor(8*intersection_position.getVectX()) + (int)floor(8 * intersection_position.getVectY()) + (int)floor(8*intersection_position.getVectZ());
-
-		if ((square % 2) == 0) {					//dark tile
-			winning_object_color.setColorRed(0.3);
-			winning_object_color.setColorGreen(0.0);
-			winning_object_color.setColorBlue(0.0);
-		}
-	}
-	else if (winning_object_color.getColorSpecial2() == 4) {		//if object special2 color == 4, make it bricked
-	
-		// apply textures
-	}
-	else if (winning_object_color.getColorSpecial2() == 5) {		//if object special2 color == 5, make it refract
-
-		//Refract(intersection_position, intersecting_ray_direction0, scene_objects, index_of_winning_object, light_sources, accuracy, ambientLight);
-		//RefractPos(intersection_position, intersecting_ray_direction0, scene_objects, index_of_winning_object, light_sources, accuracy, ambientLight);
-
-		//cout << "Running option 5" << endl;
-		/*
-		double n1 = 1.0;
-		double n2 = 1.52;
-		double nr = n1 / n2;
-
-		Vect tempPosition = intersection_position;			//sphere face position
-		Vect tempNormal = winning_object_normal;			//get sphere face normal
-		Vect tempDirection0 = intersecting_ray_direction;	//sphere face ray direction
-
-		double temp1 = (nr*(tempNormal.dotProduct(tempDirection0))); 
-		double temp2 = tempNormal.dotProduct(tempDirection0)*tempNormal.dotProduct(tempDirection0);
-		double temp3 = temp1 - sqrt(1 - nr*nr*(1 - temp2));
-		Vect temp4 = tempNormal.vectMult(temp3);
-
-		Vect temp5 = tempDirection0.vectMult(-nr*nr);
-		Vect T1 = temp4.vectAdd(temp5);
-
-		intersecting_ray_direction = T1;
-
-	//	cout << "X = " << T1.getVectX() << endl;
-	//	cout << "Y = " << T1.getVectY() << endl;
-	//	cout << "Z = " << T1.getVectZ() << endl;
-
-		//done entering sphere
-		
-		//begin leaving sphere
-		double nr2 = n2 / n1;
-
-		double distanceFromFirstPoint2Second = scene_objects.at(index_of_winning_object)->findIntersection2(Ray(tempPosition, T1));	//find the intersections
-		Vect tempPosition2 = tempPosition.vectAdd(T1.vectMult(distanceFromFirstPoint2Second));	//sphere backside position
-
-		Vect tempNormal2 = scene_objects.at(index_of_winning_object)->getNormalAt(tempPosition2);			//get sphere backside normal
-		Vect tempDirection2 = intersecting_ray_direction;	//sphere backside ray direction
-
-		double temp11 = (nr2*(tempNormal2.dotProduct(tempDirection2)));
-		double temp12 = tempNormal2.dotProduct(tempDirection2)*tempNormal.dotProduct(tempDirection2);
-		double temp13 = temp11 - sqrt(1 - nr2*nr2*(1 - temp12));
-		Vect temp14 = tempNormal2.vectMult(temp13);
-
-		Vect temp15 = tempDirection2.vectMult(-nr2*nr2);
-		Vect T11 = temp14.vectAdd(temp15);
-
-		intersecting_ray_direction = T11;
-
-		//proceed to next object behind sphere
-		*/
-	}
-
-	//end patterns, textures, refractions
-
-	Color final_color = winning_object_color.colorScalar(ambientLight);		//set initial final color for pixel to object under ambient light
-
-	//reflections
-	if (winning_object_color.getColorSpecial() > 0 && winning_object_color.getColorSpecial() <= 1) {
-		// reflection from objects with specular intensity
-		double dot1 = winning_object_normal.dotProduct(intersecting_ray_direction.negative());
-		Vect scalar1 = winning_object_normal.vectMult(dot1);
-		Vect add1 = scalar1.vectAdd(intersecting_ray_direction);
-		Vect scalar2 = add1.vectMult(2);
-		Vect add2 = intersecting_ray_direction.negative().vectAdd(scalar2);
-		Vect reflection_direction = add2.normalize();
-
-		Ray reflection_ray(intersection_position, reflection_direction);
-
-		//find first intersection
-		vector<double> reflection_intersections;
-
-		for (int reflection_index = 0; reflection_index < scene_objects.size(); reflection_index++) {
-			reflection_intersections.push_back(scene_objects.at(reflection_index)->findIntersection(reflection_ray));
-		}
-
-		int index_of_winning_object_with_reflection = winningObjectIndex(reflection_intersections);
-
-		if (index_of_winning_object_with_reflection != -1) {		//reflection ray hits nothing
-			if (reflection_intersections.at(index_of_winning_object_with_reflection) > accuracy ) {
-
-				Vect reflection_intersection_position = intersection_position.vectAdd(reflection_direction.vectMult(reflection_intersections.at(index_of_winning_object_with_reflection)));
-				Vect reflection_intersection_ray_direction = reflection_direction;
-
-				Color reflection_intersection_color = getColorAt(reflection_intersection_position, reflection_intersection_ray_direction, scene_objects, index_of_winning_object_with_reflection, light_sources, accuracy, ambientLight);
-
-				final_color = final_color.colorAdd(reflection_intersection_color.colorScalar(winning_object_color.getColorSpecial()));
-			}		//end if
-		}		//end if
-	}		//end if
-	//end reflections
-
-	//lights and shadows
-	for (int light_index = 0; light_index < light_sources.size(); light_index++) {
-
-		Vect light_direction = light_sources.at(light_index)->getLightPosition().vectAdd(intersection_position.negative()).normalize();
-		float cosine_angle = winning_object_normal.dotProduct(light_direction);
-
-		if (cosine_angle > 0) {
-			//test for shadows
-			bool shadowed = false;
-
-			Vect distance_to_light = light_sources.at(light_index)->getLightPosition().vectAdd(intersection_position.negative()).normalize();
-			float distance_to_light_magnitude = distance_to_light.magnitute();
-			
-			Ray shadow_ray(intersection_position, light_sources.at(light_index)->getLightPosition().vectAdd(intersection_position.negative()).normalize());
-			vector<double> secondary_intersections;
-
-			for (int object_index = 0; object_index < scene_objects.size() && shadowed == false; object_index++) {
-				secondary_intersections.push_back(scene_objects.at(object_index)->findIntersection(shadow_ray));
-			}
-
-			//check if pixel is shadowed
-			for (int c = 0; c < secondary_intersections.size(); c++) {
-				if (secondary_intersections.at(c) > accuracy) {
-					if (secondary_intersections.at(c) <= distance_to_light_magnitude) {
-						shadowed = true;
-					}
-					break;
-				}
-				
-			}	//end shadow check
-
-			if (shadowed == false) {
-				final_color = final_color.colorAdd(winning_object_color.colorMultiply(light_sources.at(light_index)->getLightColor()).colorScalar(cosine_angle));
-			
-				//get shinyness
-				if (winning_object_color.getColorSpecial() > 0 && winning_object_color.getColorSpecial() <= 1) {
-					double dot1 = winning_object_normal.dotProduct(intersecting_ray_direction.negative());
-					Vect scalar1 = winning_object_normal.vectMult(dot1);
-					Vect add1 = scalar1.vectAdd(intersecting_ray_direction);
-					Vect scalar2 = add1.vectMult(2);
-					Vect add2 = intersecting_ray_direction.negative().vectAdd(scalar2);
-					Vect Reflection_direction = add2.normalize();						//get reflection direction
-
-					double specular = Reflection_direction.dotProduct(light_direction);
-					if (specular > 0) {
-						specular = pow(specular, 10);
-						final_color = final_color.colorAdd(light_sources.at(light_index)->getLightColor().colorScalar(specular*winning_object_color.getColorSpecial()));
-					}
-				}
-			}	//end shadow if
-		}	//end if(cosine_angle > 0)
-	} // end outermost for
-	//end lights and shadows
-
-	return final_color.clip();
-}
-
-void renderSlice(int xMin, int xMax, int threadNum);
-
-void meshLoader(string filename);
 
 void main() {
 
+	//addSceneObjects();
 
-
+	// add scene objects
 	//add lights to scene
 	light_sources.push_back(dynamic_cast<LSource*>(&scene_light));
 	light_sources.push_back(dynamic_cast<LSource*>(&scene_light2));
 	//end lights
 
-	//add grid markers to scene
-	//scene_objects.push_back(dynamic_cast<Object*>(&scene_sphere0));		//grid
-	//scene_objects.push_back(dynamic_cast<Object*>(&scene_sphere));		//grid
-	//scene_objects.push_back(dynamic_cast<Object*>(&scene_sphere2));		//grid
-	//scene_objects.push_back(dynamic_cast<Object*>(&scene_sphere3));
+	// begin scene objects
+	Plane scene_plane(Vect(0, 1, 0), 0, tile_floor);				//up direction (x, y, z), distance from origin, color/texture
+	Sphere refractedSphere(Vect(-1.5, .5, 1.2), .5, refractive);	//center, radius, color
+	Sphere checkeredSphere(Vect(1.5, .5, 1.2), .5, checkerMt1);		//center, radius, color
+
+	//grid markers
+	Vect trueOrigin(0, 0, 0);
+	Sphere scene_sphere0(trueOrigin, .1, pretty_maroon);		//center, radius, color
+	Vect origin(-1, 0, 0);
+	Sphere scene_sphere(origin, .1, pretty_green);				//center, radius, color
+	Vect origin2(1, 0, 0);
+	Sphere scene_sphere2(origin2, .1, pretty_green);			//center, radius, color
+	Vect origin3(-1.5, .5, 3.5);
+	Sphere scene_sphere3(origin3, .1, orange);					//center, radius, color
+
+	scene_objects.push_back(dynamic_cast<Object*>(&scene_sphere0));		//grid
+	scene_objects.push_back(dynamic_cast<Object*>(&scene_sphere));		//grid
+	scene_objects.push_back(dynamic_cast<Object*>(&scene_sphere2));		//grid
+	scene_objects.push_back(dynamic_cast<Object*>(&scene_sphere3));
+	//end grid markers
 
 	//add required objects to scene
 	scene_objects.push_back(dynamic_cast<Object*>(&scene_plane));
@@ -586,76 +150,84 @@ void main() {
 	scene_objects.push_back(dynamic_cast<Object*>(&checkeredSphere));
 
 	//add additional objects to scene
-	//Sphere ball(Vect(-1.0, 2.5, -1.0), 1.0, Sun);
-	//scene_objects.push_back(dynamic_cast<Object*>(&ball));
+	Sphere ball(Vect(-1.0, 2.5, -1.0), 1.0, Sun);
+	scene_objects.push_back(dynamic_cast<Object*>(&ball));
 
+	//add pyramid
+	//pyramid sides
+	Triangle PyramidF;
+	Triangle PyramidL;
+	Triangle PyramidR;
+	Triangle PyramidB;
+	Triangle PyramidBottom;
+	Triangle PyramidBottom2;
+
+	//pyramid side normals
 	Vect A(-0.5, 1.0, 1.2);
 	Vect B(0.5, 1.0, 1.2);
 	Vect C(0.5, 1.0, 2.2);
 	Vect D(-0.5, 1, 2.2);
 	Vect E(0.0, 0.0, 1.7);
 
-	Triangle PyrimidF;
-	Triangle PyrimidL;
-	Triangle PyrimidR;
-	Triangle PyrimidB;
-	Triangle PyrimidBottom;
-	Triangle PyrimidBottom2;
+	//define pyramid sides
+	PyramidF.setA(A);
+	PyramidF.setB(B);
+	PyramidF.setC(E);
+	Vect pn = PyramidF.calcTriangleNormal();
+	PyramidF.setTriangleNormal(pn);
+	PyramidF.setColor(orange);
 
-	PyrimidF.setA(A);
-	PyrimidF.setB(B);
-	PyrimidF.setC(E);
-	Vect pn = PyrimidF.calcTriangleNormal();
-	PyrimidF.setTriangleNormal(pn);
-	PyrimidF.setColor(orange);
+	PyramidL.setA(A);
+	PyramidL.setB(D);
+	PyramidL.setC(E);
+	pn = PyramidL.calcTriangleNormal();
+	PyramidL.setTriangleNormal(pn);
+	PyramidL.setColor(orange);
 
-	PyrimidL.setA(A);
-	PyrimidL.setB(D);
-	PyrimidL.setC(E);
-	pn = PyrimidL.calcTriangleNormal();
-	PyrimidL.setTriangleNormal(pn);
-	PyrimidL.setColor(orange);
+	PyramidR.setA(B);
+	PyramidR.setB(C);
+	PyramidR.setC(E);
+	pn = PyramidR.calcTriangleNormal();
+	PyramidR.setTriangleNormal(pn);
+	PyramidR.setColor(orange);
 
-	PyrimidR.setA(B);
-	PyrimidR.setB(C);
-	PyrimidR.setC(E);
-	pn = PyrimidR.calcTriangleNormal();
-	PyrimidR.setTriangleNormal(pn);
-	PyrimidR.setColor(orange);
+	PyramidB.setA(D);
+	PyramidB.setB(C);
+	PyramidB.setC(E);
+	pn = PyramidB.calcTriangleNormal();
+	PyramidB.setTriangleNormal(pn);
+	PyramidB.setColor(orange);
 
-	PyrimidB.setA(D);
-	PyrimidB.setB(C);
-	PyrimidB.setC(E);
-	pn = PyrimidB.calcTriangleNormal();
-	PyrimidB.setTriangleNormal(pn);
-	PyrimidB.setColor(orange);
+	PyramidBottom.setA(A);
+	PyramidBottom.setB(B);
+	PyramidBottom.setC(C);
+	pn = PyramidBottom.calcTriangleNormal();
+	PyramidBottom.setTriangleNormal(pn);
+	PyramidBottom.setColor(orange);
 
-	PyrimidBottom.setA(A);
-	PyrimidBottom.setB(B);
-	PyrimidBottom.setC(C);
-	pn = PyrimidBottom.calcTriangleNormal();
-	PyrimidBottom.setTriangleNormal(pn);
-	PyrimidBottom.setColor(orange);
+	PyramidBottom2.setA(A);
+	PyramidBottom2.setB(C);
+	PyramidBottom2.setC(D);
+	pn = PyramidBottom2.calcTriangleNormal();
+	PyramidBottom2.setTriangleNormal(pn);
+	PyramidBottom2.setColor(orange);
+	//end define pyramid sides
 
-	PyrimidBottom2.setA(A);
-	PyrimidBottom2.setB(C);
-	PyrimidBottom2.setC(D);
-	pn = PyrimidBottom2.calcTriangleNormal();
-	PyrimidBottom2.setTriangleNormal(pn);
-	PyrimidBottom2.setColor(orange);
+	// add pyramid to scene
+	scene_objects.push_back(dynamic_cast<Object*>(&PyramidF));
+	scene_objects.push_back(dynamic_cast<Object*>(&PyramidL));
+	scene_objects.push_back(dynamic_cast<Object*>(&PyramidR));
+	scene_objects.push_back(dynamic_cast<Object*>(&PyramidB));
+	scene_objects.push_back(dynamic_cast<Object*>(&PyramidBottom));
+	scene_objects.push_back(dynamic_cast<Object*>(&PyramidBottom2));
+	// end pyramid
 
-	//scene_objects.push_back(dynamic_cast<Object*>(&PyrimidF));
-	//scene_objects.push_back(dynamic_cast<Object*>(&PyrimidL));
-	//scene_objects.push_back(dynamic_cast<Object*>(&PyrimidR));
-	//scene_objects.push_back(dynamic_cast<Object*>(&PyrimidB));
-	//scene_objects.push_back(dynamic_cast<Object*>(&PyrimidBottom));
-//	scene_objects.push_back(dynamic_cast<Object*>(&PyrimidBottom2));
-
-//	Plane mirror1(Vect(0, 0, -1.0), -3, mirrorFinish);					//up direction, distance from origin, color
-//	scene_objects.push_back(dynamic_cast<Object*>(&mirror1));
-
-	//meshLoader("tris1.txt");											//generates mesh from file
-	//end add objects
+	// mirror at back of scene
+	Plane mirror1(Vect(0, 0, -1.0), -3, mirrorFinish);					//up direction, distance from origin, color
+	scene_objects.push_back(dynamic_cast<Object*>(&mirror1));
+	//end add scene objects
+	
+	system("pause");
 
 	bool flag = false;
 	int threadCount = 1;
@@ -670,7 +242,7 @@ void main() {
 			cout << "Invalid entry, try again. \n\n";
 		}
 	}
-	slice = width/(double)threadCount;
+	slice = width/(double)threadCount;		// define width of slice for each CPU thread
 
 	cout << "\nMultithreading is wonderful. Set to use " << threadCount << " CPU threads.\n\n";
 
@@ -679,7 +251,6 @@ void main() {
 	t1 = clock();		//start time
 
 	//multithreading FTW!
-
 	if (threadCount == 1) {
 		std::thread thread0(renderSlice, 0, width, 0);
 
@@ -1064,7 +635,6 @@ void main() {
 	}
 	//fairwell my lovely threads
 
-	
 	cout << " done.\n";
 
 	t2 = clock();
@@ -1080,7 +650,249 @@ void main() {
 	system("pause");
 }
 
+void addSceneObjects() {
 
+}
+
+Color getColorAt(Vect intersection_position, Vect intersecting_ray_direction0, vector<Object*> scene_objects, int index_of_winning_object, vector<LSource*>light_sources, double accuracy, double ambientLight) {
+
+	Color winning_object_color = scene_objects.at(index_of_winning_object)->getColor();
+	Vect winning_object_normal = scene_objects.at(index_of_winning_object)->getNormalAt(intersection_position);
+	Vect intersecting_ray_direction = intersecting_ray_direction0;
+
+	//patterns, textures, refractions
+	if (winning_object_color.getColorSpecial2() == 2) {		//if object special2 color == 2, bit checkers
+		int square = (int)floor(intersection_position.getVectX()) + (int)floor(intersection_position.getVectZ());
+		if ((square % 2) == 0) {					//dark tile
+			winning_object_color.setColorRed(0.2);
+			winning_object_color.setColorGreen(0.2);
+			winning_object_color.setColorBlue(0.2);
+		}
+	}
+	else if (winning_object_color.getColorSpecial2() == 3) {		//if object special2 color == 3, small checkers
+		int square = (int)floor(8 * intersection_position.getVectX()) + (int)floor(8 * intersection_position.getVectY()) + (int)floor(8 * intersection_position.getVectZ());
+
+		if ((square % 2) == 0) {					//dark tile
+			winning_object_color.setColorRed(0.3);
+			winning_object_color.setColorGreen(0.0);
+			winning_object_color.setColorBlue(0.0);
+		}
+	}
+	else if (winning_object_color.getColorSpecial2() == 4) {		//if object special2 color == 4, make it bricked
+
+																	// apply textures
+	}
+	//end patterns, textures, refractions
+
+	Color final_color = winning_object_color.colorScalar(ambientLight);		//set initial final color for pixel to object under ambient light
+
+	//reflections
+	if (winning_object_color.getColorSpecial() > 0 && winning_object_color.getColorSpecial() <= 1) {			// reflection from objects with specular intensity
+
+		double dot1 = winning_object_normal.dotProduct(intersecting_ray_direction.negative());
+		Vect scalar1 = winning_object_normal.vectMult(dot1);
+		Vect add1 = scalar1.vectAdd(intersecting_ray_direction);
+		Vect scalar2 = add1.vectMult(2);
+		Vect add2 = intersecting_ray_direction.negative().vectAdd(scalar2);
+		Vect reflection_direction = add2.normalize();
+
+		Ray reflection_ray(intersection_position, reflection_direction);
+
+		//find first intersection
+		vector<double> reflection_intersections;
+
+		for (int reflection_index = 0; reflection_index < scene_objects.size(); reflection_index++) {
+			reflection_intersections.push_back(scene_objects.at(reflection_index)->findIntersection(reflection_ray));
+		}
+
+		int index_of_winning_object_with_reflection = winningObjectIndex(reflection_intersections);
+
+		//reflection ray hits nothing
+		if (index_of_winning_object_with_reflection != -1) {												
+			if (reflection_intersections.at(index_of_winning_object_with_reflection) > accuracy) {
+
+				Vect reflection_intersection_position = intersection_position.vectAdd(reflection_direction.vectMult(reflection_intersections.at(index_of_winning_object_with_reflection)));
+				Vect reflection_intersection_ray_direction = reflection_direction;
+
+				Color reflection_intersection_color = getColorAt(reflection_intersection_position, reflection_intersection_ray_direction, scene_objects, index_of_winning_object_with_reflection, light_sources, accuracy, ambientLight);
+
+				final_color = final_color.colorAdd(reflection_intersection_color.colorScalar(winning_object_color.getColorSpecial()));
+			}		//end if
+		}		//end if
+	}		
+	//end reflections
+
+	//lights and shadows
+	for (int light_index = 0; light_index < light_sources.size(); light_index++) {
+
+		Vect light_direction = light_sources.at(light_index)->getLightPosition().vectAdd(intersection_position.negative()).normalize();
+		float cosine_angle = winning_object_normal.dotProduct(light_direction);
+
+		if (cosine_angle > 0) {
+			//test for shadows
+			bool shadowed = false;
+
+			Vect distance_to_light = light_sources.at(light_index)->getLightPosition().vectAdd(intersection_position.negative()).normalize();
+			float distance_to_light_magnitude = distance_to_light.magnitute();
+
+			Ray shadow_ray(intersection_position, light_sources.at(light_index)->getLightPosition().vectAdd(intersection_position.negative()).normalize());
+			vector<double> secondary_intersections;
+
+			for (int object_index = 0; object_index < scene_objects.size() && shadowed == false; object_index++) {
+				secondary_intersections.push_back(scene_objects.at(object_index)->findIntersection(shadow_ray));
+			}
+
+			//check if pixel is shadowed
+			for (int c = 0; c < secondary_intersections.size(); c++) {
+				if (secondary_intersections.at(c) > accuracy) {
+					if (secondary_intersections.at(c) <= distance_to_light_magnitude) {
+						shadowed = true;
+					}
+					break;
+				}
+
+			}	//end shadow check
+
+			if (shadowed == false) {
+				final_color = final_color.colorAdd(winning_object_color.colorMultiply(light_sources.at(light_index)->getLightColor()).colorScalar(cosine_angle));
+
+				//get shinyness
+				if (winning_object_color.getColorSpecial() > 0 && winning_object_color.getColorSpecial() <= 1) {
+					double dot1 = winning_object_normal.dotProduct(intersecting_ray_direction.negative());
+					Vect scalar1 = winning_object_normal.vectMult(dot1);
+					Vect add1 = scalar1.vectAdd(intersecting_ray_direction);
+					Vect scalar2 = add1.vectMult(2);
+					Vect add2 = intersecting_ray_direction.negative().vectAdd(scalar2);
+					Vect Reflection_direction = add2.normalize();						//get reflection direction
+
+					double specular = Reflection_direction.dotProduct(light_direction);
+					if (specular > 0) {
+						specular = pow(specular, 10);
+						final_color = final_color.colorAdd(light_sources.at(light_index)->getLightColor().colorScalar(specular*winning_object_color.getColorSpecial()));
+					}
+				}
+			}	//end shadow if
+		}	//end if(cosine_angle > 0)
+	} // end outermost for
+	  //end lights and shadows
+
+	return final_color.clip();
+}
+
+//find index of first intersection
+int winningObjectIndex(vector<double> object_intersections) {
+	int index_of_minimum_value;
+
+
+	if (object_intersections.size() == 0) {		//check if intersection exists!
+		return -1;
+	}
+	else if (object_intersections.size() == 1) {	//only 1 intersection
+		if (object_intersections.at(0) > 0) {
+			return 0;	//index 0
+		}
+		else {	//intersection is negative, no hits
+			return -1;
+		}
+	}
+	else {		//find first intersection if more than 1 exists
+
+		double max = 0;
+		for (int i = 0; i < object_intersections.size(); i++) {		//find intersection closest to camera
+			if (max < object_intersections.at(i)) {
+				max = object_intersections.at(i);
+			}	//end if
+		}	//end for
+
+		if (max > 0) {
+			for (int index = 0; index < object_intersections.size(); index++) {
+				if (object_intersections.at(index) > 0 && object_intersections.at(index) <= max) {
+					max = object_intersections.at(index);
+					index_of_minimum_value = index;				//index of nearest intersection
+				}	//end if
+			}	//end for
+
+			return index_of_minimum_value;
+		}	//end if max > 0
+		else {
+			return -1;		//all intersections are negative
+		}
+
+
+	}	//end outermost if/else
+
+}		//end winningObjectIndex
+
+//save render to bitmap
+void savebmp(const char *filename, int w, int h, int dpi, RGBType *data) {
+
+	FILE *f;
+	int k = w * h;
+	int s = 4 * k;
+	int filesize = 54 + s;
+
+	double factor = 39.375;
+	int m = static_cast<int>(factor);
+
+	int ppm = dpi * m;
+	unsigned char bmpfileheader[14] = { 'B', 'M', 0, 0, 0, 0, 0, 0, 0, 0, 54, 0, 0, 0 };
+	unsigned char bmpinfoheader[40] = { 40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 24, 0 };
+
+	bmpfileheader[2] = (unsigned char)(filesize);
+	bmpfileheader[3] = (unsigned char)(filesize >> 8);
+	bmpfileheader[4] = (unsigned char)(filesize >> 16);
+	bmpfileheader[5] = (unsigned char)(filesize >> 24);
+
+	bmpinfoheader[4] = (unsigned char)(w);
+	bmpinfoheader[5] = (unsigned char)(w >> 8);
+	bmpinfoheader[6] = (unsigned char)(w >> 16);
+	bmpinfoheader[7] = (unsigned char)(w >> 24);
+
+	bmpinfoheader[8] = (unsigned char)(h);
+	bmpinfoheader[9] = (unsigned char)(h >> 8);
+	bmpinfoheader[10] = (unsigned char)(h >> 16);
+	bmpinfoheader[11] = (unsigned char)(h >> 24);
+
+	bmpinfoheader[21] = (unsigned char)(s);
+	bmpinfoheader[22] = (unsigned char)(s >> 8);
+	bmpinfoheader[23] = (unsigned char)(s >> 16);
+	bmpinfoheader[24] = (unsigned char)(s >> 24);
+
+	bmpinfoheader[25] = (unsigned char)(ppm);
+	bmpinfoheader[26] = (unsigned char)(ppm >> 8);
+	bmpinfoheader[27] = (unsigned char)(ppm >> 16);
+	bmpinfoheader[28] = (unsigned char)(ppm >> 24);
+
+	bmpinfoheader[29] = (unsigned char)(ppm);
+	bmpinfoheader[30] = (unsigned char)(ppm >> 8);
+	bmpinfoheader[31] = (unsigned char)(ppm >> 16);
+	bmpinfoheader[32] = (unsigned char)(ppm >> 24);
+
+
+
+	f = fopen(filename, "wb");
+
+	fwrite(bmpfileheader, 1, 14, f);
+	fwrite(bmpinfoheader, 1, 40, f);
+
+	for (int i = 0; i < k; i++) {
+
+		RGBType rgb = data[i];
+
+		double red = (data[i].r) * 255;
+		double green = (data[i].g) * 255;
+		double blue = (data[i].b) * 255;
+
+		unsigned char color[3] = { (int)floor(blue), (int)floor(green), (int)floor(red) };
+
+		fwrite(color, 1, 3, f);
+	}
+
+	fclose(f);
+
+}
+
+// renders a vertical slice of the scene
 void renderSlice(int xMin, int xMax, int threadNum) {
 	int thisThread = threadNum;
 
@@ -1178,56 +990,6 @@ void renderSlice(int xMin, int xMax, int threadNum) {
 
 							Color winning_object_color = scene_objects.at(index_of_winning_object)->getColor();		//get color attributes for refraction option
 							Vect winning_object_normal = scene_objects.at(index_of_winning_object)->getNormalAt(intersection_position);
-
-							if (winning_object_color.getColorSpecial2() == 5) {		//if object special2 color == 5, make it refract
-								/*
-								Vect tempPosition = intersection_position;			//sphere face position
-								Vect tempNormal = winning_object_normal;			//get sphere face normal
-								Vect tempDirection0 = intersecting_ray_direction;	//sphere face ray direction
-
-								double n1 = 1;
-								double n2 = 1.52;
-								double nr = n1/n2;
-
-								double temp1 = (nr*(tempNormal.dotProduct(tempDirection0)));
-								double temp2 = tempNormal.dotProduct(tempDirection0)*tempNormal.dotProduct(tempDirection0);
-								double temp3 = temp1 - sqrt(1 - nr*nr*(1 - temp2));
-								Vect temp4 = tempNormal.vectMult(temp3);
-
-								Vect temp5 = tempDirection0.vectMult(-nr*nr);
-								Vect T1 = temp4.vectAdd(temp5);
-
-								intersecting_ray_direction = T1;
-
-								//done entering sphere
-
-								//begin leaving sphere
-								double nr2 = n2 / n1;
-
-								tempPosition = tempPosition.vectAdd(Vect(0.0, 0.0, 0.0001));		//slight Z offset to get off first intersection point
-
-								double distanceFromFirstPoint2Second = scene_objects.at(index_of_winning_object)->findIntersection(Ray(tempPosition, T1));	//find the intersections
-								Vect tempPosition2 = tempPosition.vectAdd(T1.vectMult(distanceFromFirstPoint2Second));	//sphere backside position
-
-								Vect tempNormal2 = scene_objects.at(index_of_winning_object)->getNormalAt(tempPosition2).negative();			//get sphere backside normal
-								Vect tempDirection2 = intersecting_ray_direction;	//sphere backside ray direction
-
-								double temp11 = (nr2*(tempNormal2.dotProduct(tempDirection2)));
-								double temp12 = tempNormal2.dotProduct(tempDirection2)*tempNormal.dotProduct(tempDirection2);
-								double temp13 = temp11 - sqrt(1 - nr2*nr2*(1 - temp12));
-								Vect temp14 = tempNormal2.vectMult(temp13);
-
-								Vect temp15 = tempDirection2.vectMult(-nr2*nr2);
-								Vect T11 = temp14.vectAdd(temp15);
-
-
-								//proceed to next object behind sphere
-								intersections.pop_back();
-								index_of_winning_object = winningObjectIndex(intersections);	//determines which object is intersected first, if any
-								intersection_position = tempPosition2;
-								intersecting_ray_direction = T11;								
-								*/
-							}
 
 							Color intersection_color = getColorAt(intersection_position, intersecting_ray_direction, scene_objects, index_of_winning_object, light_sources, accuracy, ambientLight);		//object intersected, get the pixel color with getColorAt()
 
@@ -1328,88 +1090,4 @@ void renderSlice(int xMin, int xMax, int threadNum) {
 	textSync.lock();
 	cout << "Thread " << thisThread << " has finished rendering.\n";
 	textSync.unlock();
-}
-
-void meshLoader(string filename) {
-
-	cout << "Loading model\n";
-
-	FILE * file = fopen("Tris1.txt", "r");
-
-	//add triangles directly to scene
-	//Triangle tempTriangle;
-	float lineHeader = 0;
-
-	float trash1, trash2, trash3, trash4;
-
-	float Ax = 0.0;
-	float Ay = 0.0;
-	float Az = 0.0;
-
-	float Axn = 0.0;
-	float Ayn = 0.0;
-	float Azn = 0.0;
-	
-	float Bx = 0.0;
-	float By = 0.0;
-	float Bz = 0.0;
-
-	float Bxn = 0.0;
-	float Byn = 0.0;
-	float Bzn = 0.0;
-
-	float Cx = 0.0;
-	float Cy = 0.0;
-	float Cz = 0.0;
-
-	float Cxn = 0.0;
-	float Cyn = 0.0;
-	float Czn = 0.0;
-	
-	fscanf(file, "%f", &lineHeader);		// get # of triangles, not actually used
-
-	lineHeader = lineHeader - 1;
-	int eof = 3;
-	int i = 0;
-	while (i < 895) {
-		eof = fscanf(file, "%f %f %f", &Ax, &Ay, &Az);				//get vertex A
-		eof = fscanf(file, "%f %f %f", &Axn, &Ayn, &Azn);			//get vertex A normal
-		eof = eof = fscanf(file, "%f %f %f %f", &trash1, &trash2, &trash3, &trash4);			//get vertex A trash
-		//cout << lineHeader << ",   " << Ax << ",   " << Ay << ",   " << Az << ",   " << Axn << ",   " << Ayn << ",   " << Azn << ",   " << trash1 << ",   " << trash2 << ",   " << trash3 << endl;
-
-
-		eof = fscanf(file, "%f %f %f", &Bx, &By, &Bz);				//get vertex A
-		eof = fscanf(file, "%f %f %f", &Bxn, &Byn, &Bzn);			//get vertex A normal
-		eof = eof = fscanf(file, "%f %f %f %f", &trash1, &trash2, &trash3, &trash4);			//get vertex B trash
-	//	cout << lineHeader << ",   " << Bx << ",   " << By << ",   " << Bz << ",   " << Bxn << ",   " << Byn << ",   " << Bzn << ",   " << trash1 << ",   " << trash2 << ",   " << trash3 << endl;
-
-
-		eof = fscanf(file, "%f %f %f", &Cx, &Cy, &Cz);				//get vertex C
-		eof = fscanf(file, "%f %f %f", &Cxn, &Cyn, &Czn);			//get vertex C normal
-		eof = eof = fscanf(file, "%f %f %f %f", &trash1, &trash2, &trash3, &trash4);			//get vertex C trash
-	//	cout << lineHeader << ",   " << Cx << ",   " << Cy << ",   " << Cz << ",   " << Cxn << ",   " << Cyn << ",   " << Czn << ",   " << trash1 << ",   " << trash2 << ",   " << trash3 << endl;
-
-		Vect vA(Ax, Ay, Az);
-		Vect vB(Bx, By, Bz);
-		Vect vC(Cx, Cy, Cz);
-
-		Vect tempNormal((Axn+Bxn+Cxn), (Ayn+Byn+Cyn), (Azn+Bzn+Czn));		//get average of vertex normals
-		Vect normal = tempNormal.normalize();
-
-		//cout << "Averaged normal = " << normal.getVectX() << "     " << normal.getVectY() << "    " << normal.getVectZ() << endl;
-
-		teapot[i].setA(vA);										// set vertex A
-		teapot[i].setA(vB);										// set vertex B
-		teapot[i].setA(vC);
-		//Vect normal = teapot[i].calcTriangleNormal();			// calculate normals from cross products, super broken!
-		teapot[i].setTriangleNormal(normal);					// set normal based on average of vertex normals, also super broken!
-		teapot[i].setColor(Sun);								// set teapot color
-
-	//	scene_objects.push_back(dynamic_cast<Object*>(&teapot[i]));				// add triangles to scene
-		i++;
-	}
-
-	fclose(file);
-	cout << "Data successfully loaded\n";
-
 }
