@@ -25,6 +25,13 @@
 
 using namespace std;
 
+//program preferences
+int width = 1920;			//	scene width
+int height = 1080;			//	scene height
+int dpi = 72;				//bitmap save parameter
+const int aadepth = 2;		//anti aliasing level, 1 = none
+//end preferences
+
 //stores pixel data
 struct RGBType {
 	double r, g, b;
@@ -32,6 +39,7 @@ struct RGBType {
 
 // functions
 void addSceneObjects();
+void threadSync();
 Color getColorAt(Vect intersection_position, Vect intersecting_ray_direction0, vector<Object*> scene_objects, int index_of_winning_object, vector<LSource*>light_sources, double accuracy, double ambientLight);
 void renderSlice(int xMin, int xMax, int threadNum);
 int winningObjectIndex(vector<double> object_intersections);
@@ -39,17 +47,18 @@ void savebmp(const char *filename, int w, int h, int dpi, RGBType *data);
 //end functions
 
 // Global variables
-mutex textSync;				//keeps text uncluttered
+mutex textSync;						//keeps text uncluttered
+mutex mtx;							// used to avoid memory out of scope
+condition_variable cv;				// avoids mem out of scope
+bool done = false;					// flags mem no longer needed
+
+int n = width*height;		// # of pixels
+double aspectRatio = (double)width / (double)height;
 
 int thisone;				// placeholder for pixels
-int width = 800;			//	scene width
-int height = 600;			//	scene height
-int dpi = 72;				//bitmap save parameter
-int n = width*height;		// # of pixels
-const int aadepth = 1;		//anti aliasing level, 1 = none
-double aspectRatio = (double)width / (double)height;
 double accuracy = 0.000001;				//accuracy of positions
 RGBType *pixels = new RGBType[n];		//holds each individual pixel
+vector<Object*> scene_objects;		//holds all objects in scene
 
 //multithreading stuff
 int slice = width/4;
@@ -110,124 +119,9 @@ Vect lightPos2(16, 16, -1);
 Light scene_light2(lightPos2, white_light2);	//light 2
 //end lights
 
-vector<Object*> scene_objects;		//holds all objects in scene
-
-
 void main() {
 
-	//addSceneObjects();
-
-	// add scene objects
-	//add lights to scene
-	light_sources.push_back(dynamic_cast<LSource*>(&scene_light));
-	light_sources.push_back(dynamic_cast<LSource*>(&scene_light2));
-	//end lights
-
-	// begin scene objects
-	Plane scene_plane(Vect(0, 1, 0), 0, tile_floor);				//up direction (x, y, z), distance from origin, color/texture
-	Sphere refractedSphere(Vect(-1.5, .5, 1.2), .5, refractive);	//center, radius, color
-	Sphere checkeredSphere(Vect(1.5, .5, 1.2), .5, checkerMt1);		//center, radius, color
-
-	//grid markers
-	Vect trueOrigin(0, 0, 0);
-	Sphere scene_sphere0(trueOrigin, .1, pretty_maroon);		//center, radius, color
-	Vect origin(-1, 0, 0);
-	Sphere scene_sphere(origin, .1, pretty_green);				//center, radius, color
-	Vect origin2(1, 0, 0);
-	Sphere scene_sphere2(origin2, .1, pretty_green);			//center, radius, color
-	Vect origin3(-1.5, .5, 3.5);
-	Sphere scene_sphere3(origin3, .1, orange);					//center, radius, color
-
-	scene_objects.push_back(dynamic_cast<Object*>(&scene_sphere0));		//grid
-	scene_objects.push_back(dynamic_cast<Object*>(&scene_sphere));		//grid
-	scene_objects.push_back(dynamic_cast<Object*>(&scene_sphere2));		//grid
-	scene_objects.push_back(dynamic_cast<Object*>(&scene_sphere3));
-	//end grid markers
-
-	//add required objects to scene
-	scene_objects.push_back(dynamic_cast<Object*>(&scene_plane));
-	scene_objects.push_back(dynamic_cast<Object*>(&refractedSphere));
-	scene_objects.push_back(dynamic_cast<Object*>(&checkeredSphere));
-
-	//add additional objects to scene
-	Sphere ball(Vect(-1.0, 2.5, -1.0), 1.0, Sun);
-	scene_objects.push_back(dynamic_cast<Object*>(&ball));
-
-	//add pyramid
-	//pyramid sides
-	Triangle PyramidF;
-	Triangle PyramidL;
-	Triangle PyramidR;
-	Triangle PyramidB;
-	Triangle PyramidBottom;
-	Triangle PyramidBottom2;
-
-	//pyramid side normals
-	Vect A(-0.5, 1.0, 1.2);
-	Vect B(0.5, 1.0, 1.2);
-	Vect C(0.5, 1.0, 2.2);
-	Vect D(-0.5, 1, 2.2);
-	Vect E(0.0, 0.0, 1.7);
-
-	//define pyramid sides
-	PyramidF.setA(A);
-	PyramidF.setB(B);
-	PyramidF.setC(E);
-	Vect pn = PyramidF.calcTriangleNormal();
-	PyramidF.setTriangleNormal(pn);
-	PyramidF.setColor(orange);
-
-	PyramidL.setA(A);
-	PyramidL.setB(D);
-	PyramidL.setC(E);
-	pn = PyramidL.calcTriangleNormal();
-	PyramidL.setTriangleNormal(pn);
-	PyramidL.setColor(orange);
-
-	PyramidR.setA(B);
-	PyramidR.setB(C);
-	PyramidR.setC(E);
-	pn = PyramidR.calcTriangleNormal();
-	PyramidR.setTriangleNormal(pn);
-	PyramidR.setColor(orange);
-
-	PyramidB.setA(D);
-	PyramidB.setB(C);
-	PyramidB.setC(E);
-	pn = PyramidB.calcTriangleNormal();
-	PyramidB.setTriangleNormal(pn);
-	PyramidB.setColor(orange);
-
-	PyramidBottom.setA(A);
-	PyramidBottom.setB(B);
-	PyramidBottom.setC(C);
-	pn = PyramidBottom.calcTriangleNormal();
-	PyramidBottom.setTriangleNormal(pn);
-	PyramidBottom.setColor(orange);
-
-	PyramidBottom2.setA(A);
-	PyramidBottom2.setB(C);
-	PyramidBottom2.setC(D);
-	pn = PyramidBottom2.calcTriangleNormal();
-	PyramidBottom2.setTriangleNormal(pn);
-	PyramidBottom2.setColor(orange);
-	//end define pyramid sides
-
-	// add pyramid to scene
-	scene_objects.push_back(dynamic_cast<Object*>(&PyramidF));
-	scene_objects.push_back(dynamic_cast<Object*>(&PyramidL));
-	scene_objects.push_back(dynamic_cast<Object*>(&PyramidR));
-	scene_objects.push_back(dynamic_cast<Object*>(&PyramidB));
-	scene_objects.push_back(dynamic_cast<Object*>(&PyramidBottom));
-	scene_objects.push_back(dynamic_cast<Object*>(&PyramidBottom2));
-	// end pyramid
-
-	// mirror at back of scene
-	Plane mirror1(Vect(0, 0, -1.0), -3, mirrorFinish);					//up direction, distance from origin, color
-	scene_objects.push_back(dynamic_cast<Object*>(&mirror1));
-	//end add scene objects
-	
-	system("pause");
+	thread addObjects(addSceneObjects);	// adds objects to scene
 
 	bool flag = false;
 	int threadCount = 1;
@@ -242,19 +136,19 @@ void main() {
 			cout << "Invalid entry, try again. \n\n";
 		}
 	}
+
 	slice = width/(double)threadCount;		// define width of slice for each CPU thread
-
 	cout << "\nMultithreading is wonderful. Set to use " << threadCount << " CPU threads.\n\n";
-
 	cout << "Rendering...\n\n";
 	clock_t t1, t2;		//timers
 	t1 = clock();		//start time
 
 	//multithreading FTW!
 	if (threadCount == 1) {
-		std::thread thread0(renderSlice, 0, width, 0);
+		//thread thread0(renderSlice, 0, width, 0);
+		//thread0.join();
 
-		thread0.join();
+		renderSlice(0, width, 0);
 
 		cout << "Combining slices...";
 
@@ -271,9 +165,9 @@ void main() {
 		}
 	}
 	else if (threadCount == 2) {
-		std::thread thread0(renderSlice, 0, slice, 0);
+		thread thread0(renderSlice, 0, slice, 0);
 		this_thread::sleep_for(chrono::milliseconds(2));
-		std::thread thread1(renderSlice, slice, width, 1);
+		thread thread1(renderSlice, slice, width, 1);
 
 		thread0.join();
 		this_thread::sleep_for(chrono::milliseconds(2));
@@ -301,13 +195,13 @@ void main() {
 		}
 	}
 	else if (threadCount == 4) {
-		std::thread thread0(renderSlice, 0, slice, 0);
+		thread thread0(renderSlice, 0, slice, 0);
 		this_thread::sleep_for(chrono::milliseconds(2));
-		std::thread thread1(renderSlice, slice, 2 * slice, 1);
+		thread thread1(renderSlice, slice, 2 * slice, 1);
 		this_thread::sleep_for(chrono::milliseconds(2));
-		std::thread thread2(renderSlice, 2 * slice, 3 * slice, 2);
+		thread thread2(renderSlice, 2 * slice, 3 * slice, 2);
 		this_thread::sleep_for(chrono::milliseconds(2));
-		std::thread thread3(renderSlice, 3 * slice, width, 3);
+		thread thread3(renderSlice, 3 * slice, width, 3);
 
 		thread0.join();
 		this_thread::sleep_for(chrono::milliseconds(2));
@@ -349,17 +243,17 @@ void main() {
 		}
 	}
 	else if (threadCount == 6) {
-		std::thread thread0(renderSlice, 0, slice, 0);
+		thread thread0(renderSlice, 0, slice, 0);
 		this_thread::sleep_for(chrono::milliseconds(2));
-		std::thread thread1(renderSlice, slice, 2 * slice, 1);
+		thread thread1(renderSlice, slice, 2 * slice, 1);
 		this_thread::sleep_for(chrono::milliseconds(2));
-		std::thread thread2(renderSlice, 2 * slice, 3 * slice, 2);
+		thread thread2(renderSlice, 2 * slice, 3 * slice, 2);
 		this_thread::sleep_for(chrono::milliseconds(2));
-		std::thread thread3(renderSlice, 3 * slice, 4 * slice, 3);
+		thread thread3(renderSlice, 3 * slice, 4 * slice, 3);
 		this_thread::sleep_for(chrono::milliseconds(2));
-		std::thread thread4(renderSlice, 4 * slice, 5 * slice, 4);
+		thread thread4(renderSlice, 4 * slice, 5 * slice, 4);
 		this_thread::sleep_for(chrono::milliseconds(2));
-		std::thread thread5(renderSlice, 5 * slice, width, 5);
+		thread thread5(renderSlice, 5 * slice, width, 5);
 
 		//cout << endl << endl;
 
@@ -417,21 +311,21 @@ void main() {
 		}
 	}
 	else if (threadCount == 8) {
-		std::thread thread0(renderSlice, 0, slice, 0);
+		thread thread0(renderSlice, 0, slice, 0);
 		this_thread::sleep_for(chrono::milliseconds(2));
-		std::thread thread1(renderSlice, slice, 2 * slice, 1);
+		thread thread1(renderSlice, slice, 2 * slice, 1);
 		this_thread::sleep_for(chrono::milliseconds(2));
-		std::thread thread2(renderSlice, 2 * slice, 3 * slice, 2);
+		thread thread2(renderSlice, 2 * slice, 3 * slice, 2);
 		this_thread::sleep_for(chrono::milliseconds(2));
-		std::thread thread3(renderSlice, 3 * slice, 4 * slice, 3);
+		thread thread3(renderSlice, 3 * slice, 4 * slice, 3);
 		this_thread::sleep_for(chrono::milliseconds(2));
-		std::thread thread4(renderSlice, 4 * slice, 5 * slice, 4);
+		thread thread4(renderSlice, 4 * slice, 5 * slice, 4);
 		this_thread::sleep_for(chrono::milliseconds(2));
-		std::thread thread5(renderSlice, 5 * slice, 6 * slice, 5);
+		thread thread5(renderSlice, 5 * slice, 6 * slice, 5);
 		this_thread::sleep_for(chrono::milliseconds(2));
-		std::thread thread6(renderSlice, 6 * slice, 7 * slice, 6);
+		thread thread6(renderSlice, 6 * slice, 7 * slice, 6);
 		this_thread::sleep_for(chrono::milliseconds(2));
-		std::thread thread7(renderSlice, 7 * slice, width, 7);
+		thread thread7(renderSlice, 7 * slice, width, 7);
 
 		thread0.join();
 		this_thread::sleep_for(chrono::milliseconds(2));
@@ -501,29 +395,29 @@ void main() {
 		}
 	} 
 	else if (threadCount == 12) {
-		std::thread thread0(renderSlice, 0, slice, 0);
+		thread thread0(renderSlice, 0, slice, 0);
 		this_thread::sleep_for(chrono::milliseconds(2));
-		std::thread thread1(renderSlice, slice, 2 * slice, 1);
+		thread thread1(renderSlice, slice, 2 * slice, 1);
 		this_thread::sleep_for(chrono::milliseconds(2));
-		std::thread thread2(renderSlice, 2 * slice, 3 * slice, 2);
+		thread thread2(renderSlice, 2 * slice, 3 * slice, 2);
 		this_thread::sleep_for(chrono::milliseconds(2));
-		std::thread thread3(renderSlice, 3 * slice, 4 * slice, 3);
+		thread thread3(renderSlice, 3 * slice, 4 * slice, 3);
 		this_thread::sleep_for(chrono::milliseconds(2));
-		std::thread thread4(renderSlice, 4 * slice, 5 * slice, 4);
+		thread thread4(renderSlice, 4 * slice, 5 * slice, 4);
 		this_thread::sleep_for(chrono::milliseconds(2));
-		std::thread thread5(renderSlice, 5 * slice, 6 * slice, 5);
+		thread thread5(renderSlice, 5 * slice, 6 * slice, 5);
 		this_thread::sleep_for(chrono::milliseconds(2));
-		std::thread thread6(renderSlice, 6 * slice, 7 * slice, 6);
+		thread thread6(renderSlice, 6 * slice, 7 * slice, 6);
 		this_thread::sleep_for(chrono::milliseconds(2));
-		std::thread thread7(renderSlice, 7 * slice, 8 * slice, 7);
+		thread thread7(renderSlice, 7 * slice, 8 * slice, 7);
 		this_thread::sleep_for(chrono::milliseconds(2));
-		std::thread thread8(renderSlice, 8 * slice, 9 * slice, 8);
+		thread thread8(renderSlice, 8 * slice, 9 * slice, 8);
 		this_thread::sleep_for(chrono::milliseconds(2));
-		std::thread thread9(renderSlice, 9 * slice, 10 * slice, 9);
+		thread thread9(renderSlice, 9 * slice, 10 * slice, 9);
 		this_thread::sleep_for(chrono::milliseconds(2));
-		std::thread thread10(renderSlice, 10 * slice, 11 * slice, 10);
+		thread thread10(renderSlice, 10 * slice, 11 * slice, 10);
 		this_thread::sleep_for(chrono::milliseconds(10));
-		std::thread thread11(renderSlice, 11 * slice, width, 11);
+		thread thread11(renderSlice, 11 * slice, width, 11);
 
 		thread0.join();
 		this_thread::sleep_for(chrono::milliseconds(2));
@@ -635,8 +529,10 @@ void main() {
 	}
 	//fairwell my lovely threads
 
-	cout << " done.\n";
+	threadSync();		//flags addObjects thread to close
+	addObjects.join();
 
+	cout << " done.\n";
 	t2 = clock();
 	float diff = ((float)t2 - (float)t1) / 1000;
 	cout << "Rendered in " << diff << "s" << endl;					//output total render time
@@ -645,15 +541,132 @@ void main() {
 	cout << endl << endl << "Render saved.\n" << endl;
 
 	delete pixels;													//cleanup
-
-	//this_thread::sleep_for(chrono::milliseconds(3000));
 	system("pause");
 }
 
-void addSceneObjects() {
-
+// allows addSceneObjects function to finish
+void threadSync() {
+	unique_lock<mutex> lck(mtx);
+	done = true;
+	cv.notify_all();
 }
 
+//adds all the objects to the scene
+void addSceneObjects() {
+
+	//add lights to scene
+	light_sources.push_back(dynamic_cast<LSource*>(&scene_light));
+	light_sources.push_back(dynamic_cast<LSource*>(&scene_light2));
+	//end lights
+
+	// add objects
+	Plane scene_plane(Vect(0, 1, 0), 0, tile_floor);				//up direction (x, y, z), distance from origin, color/texture
+	Sphere refractedSphere(Vect(-1.5, .5, 1.2), .5, refractive);	//center, radius, color
+	Sphere checkeredSphere(Vect(1.5, .5, 1.2), .5, checkerMt1);		//center, radius, color
+	scene_objects.push_back(dynamic_cast<Object*>(&scene_plane));
+	scene_objects.push_back(dynamic_cast<Object*>(&refractedSphere));
+	scene_objects.push_back(dynamic_cast<Object*>(&checkeredSphere));
+
+	//grid markers
+	Vect trueOrigin(0, 0, 0);
+	Sphere scene_sphere0(trueOrigin, .1, pretty_maroon);		//center, radius, color
+	Vect origin(-1, 0, 0);
+	Sphere scene_sphere(origin, .1, pretty_green);				//center, radius, color
+	Vect origin2(1, 0, 0);
+	Sphere scene_sphere2(origin2, .1, pretty_green);			//center, radius, color
+	Vect origin3(-1.5, .5, 3.5);
+	Sphere scene_sphere3(origin3, .1, orange);					//center, radius, color
+
+	scene_objects.push_back(dynamic_cast<Object*>(&scene_sphere0));		//grid
+	scene_objects.push_back(dynamic_cast<Object*>(&scene_sphere));		//grid
+	scene_objects.push_back(dynamic_cast<Object*>(&scene_sphere2));		//grid
+	scene_objects.push_back(dynamic_cast<Object*>(&scene_sphere3));
+	//end grid markers
+
+	//add additional objects to scene
+	Sphere ball(Vect(-1.0, 2.5, -1.0), 1.0, Sun);
+	scene_objects.push_back(dynamic_cast<Object*>(&ball));
+
+	//add pyramid
+	//pyramid sides
+	Triangle PyramidF;
+	Triangle PyramidL;
+	Triangle PyramidR;
+	Triangle PyramidB;
+	Triangle PyramidBottom;
+	Triangle PyramidBottom2;
+
+	//pyramid side normals
+	Vect A(-0.5, 1.0, 1.2);
+	Vect B(0.5, 1.0, 1.2);
+	Vect C(0.5, 1.0, 2.2);
+	Vect D(-0.5, 1, 2.2);
+	Vect E(0.0, 0.0, 1.7);
+
+	//define pyramid sides
+	PyramidF.setA(A);
+	PyramidF.setB(B);
+	PyramidF.setC(E);
+	Vect pn = PyramidF.calcTriangleNormal();
+	PyramidF.setTriangleNormal(pn);
+	PyramidF.setColor(orange);
+
+	PyramidL.setA(A);
+	PyramidL.setB(D);
+	PyramidL.setC(E);
+	pn = PyramidL.calcTriangleNormal();
+	PyramidL.setTriangleNormal(pn);
+	PyramidL.setColor(orange);
+
+	PyramidR.setA(B);
+	PyramidR.setB(C);
+	PyramidR.setC(E);
+	pn = PyramidR.calcTriangleNormal();
+	PyramidR.setTriangleNormal(pn);
+	PyramidR.setColor(orange);
+
+	PyramidB.setA(D);
+	PyramidB.setB(C);
+	PyramidB.setC(E);
+	pn = PyramidB.calcTriangleNormal();
+	PyramidB.setTriangleNormal(pn);
+	PyramidB.setColor(orange);
+
+	PyramidBottom.setA(A);
+	PyramidBottom.setB(B);
+	PyramidBottom.setC(C);
+	pn = PyramidBottom.calcTriangleNormal();
+	PyramidBottom.setTriangleNormal(pn);
+	PyramidBottom.setColor(orange);
+
+	PyramidBottom2.setA(A);
+	PyramidBottom2.setB(C);
+	PyramidBottom2.setC(D);
+	pn = PyramidBottom2.calcTriangleNormal();
+	PyramidBottom2.setTriangleNormal(pn);
+	PyramidBottom2.setColor(orange);
+	//end define pyramid sides
+
+	// add pyramid to scene
+	scene_objects.push_back(dynamic_cast<Object*>(&PyramidF));
+	scene_objects.push_back(dynamic_cast<Object*>(&PyramidL));
+	scene_objects.push_back(dynamic_cast<Object*>(&PyramidR));
+	scene_objects.push_back(dynamic_cast<Object*>(&PyramidB));
+	scene_objects.push_back(dynamic_cast<Object*>(&PyramidBottom));
+	scene_objects.push_back(dynamic_cast<Object*>(&PyramidBottom2));
+	// end pyramid
+
+	// mirror at back of scene
+	Plane mirror1(Vect(0, 0, -1.0), -3, mirrorFinish);	//up direction, distance from origin, color
+	scene_objects.push_back(dynamic_cast<Object*>(&mirror1));
+	//end adding objects
+
+	//keeps function open until rendering complete
+	unique_lock<mutex> lck(mtx);	
+	cv.wait(lck);					
+}
+
+//gets color for ray
 Color getColorAt(Vect intersection_position, Vect intersecting_ray_direction0, vector<Object*> scene_objects, int index_of_winning_object, vector<LSource*>light_sources, double accuracy, double ambientLight) {
 
 	Color winning_object_color = scene_objects.at(index_of_winning_object)->getColor();
